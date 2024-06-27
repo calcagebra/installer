@@ -1,2 +1,1 @@
 # installer
-Installer for calcagebra.
