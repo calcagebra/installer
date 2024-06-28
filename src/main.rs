@@ -1,5 +1,8 @@
+use std::time::Duration;
+
+use indicatif::{ProgressBar, ProgressStyle};
 use inquire::Select;
-use reqwest::ClientBuilder;
+use reqwest::{Client, ClientBuilder};
 use serde::Deserialize;
 
 #[derive(Deserialize, Debug)]
@@ -20,13 +23,32 @@ const API_URL: &str = "https://api.github.com/repos/calcagebra/calcagebra/releas
 const USER_AGENT: &str =
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:101.0) Gecko/20100101 Firefox/101.0";
 
+async fn wrap_spinner(
+    client: &Client,
+    url: &str,
+    message: String,
+) -> Result<reqwest::Response, reqwest::Error> {
+    let pb = ProgressBar::new_spinner();
+    pb.enable_steady_tick(Duration::from_millis(120));
+    pb.set_style(
+        ProgressStyle::with_template("{spinner:.blue} {msg}")
+            .unwrap()
+            .tick_strings(&["⠋", "⠙", "⠚", "⠞", "⠖", "⠦", "⠴", "⠲", "⠳", "⠓"]),
+    );
+    pb.set_message(message.clone());
+
+    let res = client.get(url).send().await;
+
+    pb.finish_with_message(format!("{message} done!"));
+
+    res
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = ClientBuilder::new().user_agent(USER_AGENT).build()?;
 
-    let resp = client
-        .get(API_URL)
-        .send()
+    let resp = wrap_spinner(&client, API_URL, "Fetching version list...".to_owned())
         .await?
         .json::<Vec<Release>>()
         .await?;
@@ -41,12 +63,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Unwrap is ok because the string comes from the vec
     let idx = resp.iter().position(|x| &x.tag_name == answer).unwrap();
 
-    let assets = client
-        .get(&resp[idx].assets_url)
-        .send()
-        .await?
-        .json::<Vec<Asset>>()
-        .await?;
+    let assets = wrap_spinner(
+        &client,
+        &resp[idx].assets_url,
+        "Fetching asset list...".to_owned(),
+    )
+    .await?
+    .json::<Vec<Asset>>()
+    .await?;
 
     let os_choice = Select::new(
         "Which binary would you like to install?",
@@ -57,9 +81,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let idx = assets.iter().position(|x| &x.name == os).unwrap();
 
-    let bin_url = assets[idx].browser_download_url;
+    let contents = wrap_spinner(
+        &client,
+        &assets[idx].browser_download_url,
+        "Downloading binary...".to_owned(),
+    )
+    .await?
+    .bytes()
+    .await?;
 
-    // TODO: write binary to file
+    std::fs::write(os, contents)?;
+
+    if cfg!(windows) {
+        println!("Wrote file `{os}` to {:?}", std::env::current_dir()?);
+    } else {
+        println!(
+            "Wrote file `{os}` ({:.2}mb) to {}/{os}",
+            assets[idx].size as f32 / 1e+6,
+            std::env::current_dir()?
+                .to_string_lossy()
+                .replace(&std::env::var("HOME")?, "~")
+        );
+    }
 
     Ok(())
 }
