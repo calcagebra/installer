@@ -1,0 +1,11 @@
+[package]
+name = "installer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1.0.203", features = ["derive"] }
+inquire = "0.7.5"
+indicatif = "0.17.8"
