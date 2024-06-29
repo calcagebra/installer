@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration, env};
 
 use indicatif::{ProgressBar, ProgressStyle};
 use inquire::Select;
@@ -90,19 +90,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .bytes()
     .await?;
 
-    std::fs::write(os, contents)?;
+    let data_var = match cfg!(windows) {
+        true => "USERPROFILE",
+        false => "HOME",
+    };
 
-    if cfg!(windows) {
-        println!("Wrote file `{os}` to {:?}", std::env::current_dir()?);
-    } else {
-        println!(
-            "Wrote file `{os}` ({:.2}mb) to {}/{os}",
-            assets[idx].size as f32 / 1e+6,
-            std::env::current_dir()?
-                .to_string_lossy()
-                .replace(&std::env::var("HOME")?, "~")
-        );
-    }
+    let mut data_dir = PathBuf::from(env::var(data_var)?);
+    data_dir.push(".calcagebra");
+    data_dir.push("bin");
+    let _ = tokio::fs::create_dir_all(&data_dir).await;
+    data_dir.push(os);
+
+    tokio::fs::write(&data_dir, contents).await?;
+
+    println!(
+        "Wrote file `{os}` ({:.2}mb) to {}",
+        assets[idx].size as f32 / 1e+6,
+        data_dir.to_string_lossy().replace(&env::var(data_var)?, "~")
+    );
 
     Ok(())
 }
