@@ -1,9 +1,13 @@
-use std::{path::PathBuf, time::Duration, env};
+mod setup;
+
+use std::{env, fs::Permissions, os::unix::fs::PermissionsExt, path::PathBuf, time::Duration};
 
 use indicatif::{ProgressBar, ProgressStyle};
 use inquire::Select;
 use reqwest::{Client, ClientBuilder};
 use serde::Deserialize;
+use setup::setup;
+use tokio::fs::set_permissions;
 
 #[derive(Deserialize, Debug)]
 struct Release {
@@ -46,6 +50,24 @@ async fn wrap_spinner(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = std::env::args();
+    let _binname = args.next();
+    match args.next() {
+        Some(arg) => match arg.as_str() {
+            "setup" => {
+                setup(std::env::consts::OS)?;
+                install_ver().await?;
+                println!("Please add `. ~/.calcagebra/env` to your shell's rc file");
+
+                Ok(())
+            },
+            _ => todo!()
+        },
+        _ => install_ver().await,
+    }
+}
+
+async fn install_ver() -> Result<(), Box<dyn std::error::Error>> {
     let client = ClientBuilder::new().user_agent(USER_AGENT).build()?;
 
     let resp = wrap_spinner(&client, API_URL, "Fetching version list...".to_owned())
@@ -72,14 +94,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .json::<Vec<Asset>>()
     .await?;
 
-    let os_choice = Select::new(
-        "Which binary would you like to install?",
-        assets.iter().map(|x| &x.name).collect(),
-    );
+    let fname = match std::env::consts::OS {
+        "windows" => "calcagebra.exe",
+        "macos" => match std::env::consts::ARCH {
+            "aarch64" => "calcagebra-aarch64-darwin",
+            _ => "calcagebra-darwin",
+        },
+        _ => "calcagebra",
+    };
 
-    let os = os_choice.prompt()?;
-
-    let idx = assets.iter().position(|x| &x.name == os).unwrap();
+    let idx = assets.iter().position(|x| x.name == fname).unwrap();
 
     let contents = wrap_spinner(
         &client,
@@ -99,14 +123,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     data_dir.push(".calcagebra");
     data_dir.push("bin");
     let _ = tokio::fs::create_dir_all(&data_dir).await;
-    data_dir.push(os);
+    data_dir.push("calcagebra");
 
     tokio::fs::write(&data_dir, contents).await?;
 
+    set_permissions(&data_dir, Permissions::from_mode(0o770)).await?;
+
     println!(
-        "Wrote file `{os}` ({:.2}mb) to {}",
+        "Wrote file `calcagebra` ({:.2}mb) to {}",
         assets[idx].size as f32 / 1e+6,
-        data_dir.to_string_lossy().replace(&env::var(data_var)?, "~")
+        data_dir
+            .to_string_lossy()
+            .replace(&env::var(data_var)?, "~")
     );
 
     Ok(())
